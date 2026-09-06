@@ -594,6 +594,11 @@ void DocumentBroker::pollThread()
                     }
                 }
 
+                // A host save carries a receipt which must not be coalesced with
+                // another save or overwrite attributes of an unfinished upload.
+                if (dispatchQueuedManualSave())
+                    continue;
+
                 // Check if there are queued activities.
                 if (!_renameFilename.empty() && !_renameSessionId.empty())
                 {
@@ -4140,6 +4145,36 @@ bool DocumentBroker::manualSave(const std::shared_ptr<ClientSession>& session,
                                 bool dontTerminateEdit, bool dontSaveIfUnmodified,
                                 const std::string& extendedData)
 {
+    ASSERT_CORRECT_THREAD();
+
+    // Ordinary toolbar/autosaves retain the existing coalescing behavior. Host
+    // saves with ExtendedData need their own WOPI request even when unmodified.
+    if (!extendedData.empty())
+    {
+        constexpr std::size_t MaxQueuedManualSaves = 16;
+        constexpr std::size_t MaxReceiptBytes = 64 * 1024;
+        if (extendedData.size() > MaxReceiptBytes)
+        {
+            session->sendTextFrameAndLogError("error: cmd=save kind=savefailed");
+            return false;
+        }
+
+        if (_docState.activity() != DocumentState::Activity::None || _saveManager.isSaving()
+            || isAsyncUploading() || !_queuedManualSaves.empty()
+            || (!_storageManager.lastUploadSuccessful()
+                && needToUploadToStorage() != NeedToUpload::No))
+        {
+            if (_queuedManualSaves.size() >= MaxQueuedManualSaves)
+            {
+                session->sendTextFrameAndLogError("error: cmd=save kind=savefailed");
+                return false;
+            }
+            _queuedManualSaves.push_back(
+                { session, dontTerminateEdit, dontSaveIfUnmodified, extendedData });
+            return true;
+        }
+    }
+
     // If we aren't saving already.
     if (_docState.activity() != DocumentState::Activity::Save)
     {
@@ -4149,6 +4184,42 @@ bool DocumentBroker::manualSave(const std::shared_ptr<ClientSession>& session,
     }
 
     LOG_DBG("Document [" << _docKey << "] is currently saving and cannot issue another save");
+    return false;
+}
+
+bool DocumentBroker::dispatchQueuedManualSave()
+{
+    ASSERT_CORRECT_THREAD();
+    if (_docState.activity() != DocumentState::Activity::None || _saveManager.isSaving()
+        || isAsyncUploading()
+        || (!_storageManager.lastUploadSuccessful()
+            && needToUploadToStorage() != NeedToUpload::No))
+        return false;
+
+    while (!_queuedManualSaves.empty())
+    {
+        auto request = std::move(_queuedManualSaves.front());
+        _queuedManualSaves.pop_front();
+        const auto session = request.session.lock();
+        if (!session)
+            continue;
+
+        const auto current = _sessions.find(session->getId());
+        if (current == _sessions.end() || current->second != session || !session->isViewLoaded()
+            || session->isCloseFrame() || session->inWaitDisconnected()
+            || !session->isWritable() || session->isLockedByPassword()
+            || !session->getAuthorization().isValid())
+        {
+            session->sendTextFrameAndLogError("error: cmd=save kind=savefailed");
+            continue;
+        }
+
+        if (sendUnoSave(session, request.dontTerminateEdit, request.dontSaveIfUnmodified,
+                        /*isAutosave=*/false, /*finalWrite=*/false, request.extendedData))
+            return true;
+
+        session->sendTextFrameAndLogError("error: cmd=save kind=savefailed");
+    }
     return false;
 }
 

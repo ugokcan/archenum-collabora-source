@@ -41,6 +41,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <deque>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -1846,6 +1847,9 @@ private:
         _docState.setActivity(DocumentState::Activity::None);
     }
 
+    /// Dispatch one host-correlated save after the preceding upload is durable.
+    bool dispatchQueuedManualSave();
+
     bool forwardUrpToChild(const std::string& message);
 
     /// Performs aggregated work after servicing all client sessions
@@ -1875,6 +1879,17 @@ private:
 
     /// Manage uploading to Storage.
     StorageManager _storageManager;
+
+    struct QueuedManualSave
+    {
+        std::weak_ptr<ClientSession> session;
+        bool dontTerminateEdit;
+        bool dontSaveIfUnmodified;
+        std::string extendedData;
+    };
+
+    // Broker-thread only. Weak references must not keep a disconnected view alive.
+    std::deque<QueuedManualSave> _queuedManualSaves;
 
     /// All session of this DocBroker by ID.
     SessionMap<ClientSession> _sessions;

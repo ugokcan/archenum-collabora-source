@@ -16,6 +16,7 @@
 #include <config.h>
 
 #include <chrono>
+#include <atomic>
 
 #include <HttpRequest.hpp>
 #include <common/Util.hpp>
@@ -29,6 +30,8 @@
 #include <helpers.hpp>
 #include <Poco/Net/HTTPRequest.h>
 #include <Poco/Util/LayeredConfiguration.h>
+#include <wsd/ClientSession.hpp>
+#include <wsd/DocumentBroker.hpp>
 
 using namespace std::literals;
 
@@ -266,9 +269,112 @@ public:
     }
 };
 
+/// A host's save receipt must not be lost when another save is already running.
+/// Both requests run in one broker callback, so Core cannot answer the first
+/// request before the second arrives. This deliberately avoids timing sleeps.
+class UnitWOPICorrelatedManualSave : public WopiTestServer
+{
+public:
+    enum class Scenario { Normal, RetryUpload, RevokeWrite };
+
+private:
+    const Scenario _scenario;
+    std::atomic_bool _started{false};
+    std::atomic_uint _uploads{0};
+    bool _requested = false; // Broker-thread only.
+    std::weak_ptr<ClientSession> _session;
+
+public:
+    explicit UnitWOPICorrelatedManualSave(Scenario scenario = Scenario::Normal)
+        : WopiTestServer(scenario == Scenario::RetryUpload ? "UnitWOPICorrelatedManualSaveRetry"
+                         : scenario == Scenario::RevokeWrite ? "UnitWOPICorrelatedManualSaveRevoke"
+                                                            : "UnitWOPICorrelatedManualSave")
+        , _scenario(scenario)
+    {
+        setTimeout(30s);
+    }
+
+    void invokeWSDTest() override
+    {
+        if (!_started.exchange(true))
+        {
+            initWebsocket("/wopi/files/0?access_token=anything");
+            WSD_CMD("load url=" + getWopiSrc());
+        }
+    }
+
+    void onDocBrokerViewLoaded(const std::string&,
+                              const std::shared_ptr<ClientSession>& session) override
+    {
+        if (_requested)
+            return;
+        _requested = true;
+        _session = session;
+        const auto broker = session->getDocumentBroker();
+        LOK_ASSERT(broker);
+        const bool firstAccepted = broker->manualSave(session, false, false, "receipt-first");
+        LOK_ASSERT(firstAccepted);
+        // Before the fix, manualSave returns false here and silently discards
+        // the second request together with its storage correlation marker.
+        const bool secondAccepted = broker->manualSave(session, false, false, "receipt-second");
+        LOK_ASSERT_MESSAGE("A correlated save must be retained while Core is saving", secondAccepted);
+    }
+
+    std::unique_ptr<http::Response>
+    assertPutFileRequest(const Poco::Net::HTTPRequest& request) override
+    {
+        const auto index = _uploads.fetch_add(1);
+        const unsigned firstAttempts = _scenario == Scenario::RetryUpload ? 2 : 1;
+        LOK_ASSERT(index < firstAttempts + 1);
+        LOK_ASSERT_EQUAL_STR(index < firstAttempts ? "receipt-first" : "receipt-second",
+                             request.get("X-COOL-WOPI-ExtendedData", ""));
+        if (_scenario == Scenario::RetryUpload && index == 0)
+            return std::make_unique<http::Response>(http::StatusCode::InternalServerError);
+        return nullptr;
+    }
+
+    void onDocumentUploaded(bool success) override
+    {
+        if (_scenario == Scenario::RetryUpload && _uploads.load() == 1)
+        {
+            LOK_ASSERT(!success);
+            return;
+        }
+        LOK_ASSERT(success);
+        if (_scenario == Scenario::RevokeWrite)
+        {
+            LOK_ASSERT_EQUAL(1u, _uploads.load());
+            const auto session = _session.lock();
+            LOK_ASSERT(session);
+            session->setWritable(false);
+            return;
+        }
+        if (_uploads.load() == (_scenario == Scenario::RetryUpload ? 3u : 2u))
+            passTest("Both concurrent host save receipts uploaded to WOPI in order");
+    }
+
+    bool onDocumentError(const std::string& message) override
+    {
+        if (_scenario == Scenario::RetryUpload
+            && message.starts_with("error: cmd=storage kind=savefailed"))
+            return true; // The first mock upload deliberately failed.
+        if (_scenario == Scenario::RevokeWrite && message == "error: cmd=save kind=savefailed")
+        {
+            LOK_ASSERT_EQUAL(1u, _uploads.load());
+            passTest("Queued host save rejected after write permission was revoked");
+            return true;
+        }
+        return false;
+    }
+};
+
 UnitBase** unit_create_wsd_multi(void)
 {
-    return new UnitBase* [3] { new UnitWOPISlow(), new UnitSuperfluousSaves(), nullptr };
+    return new UnitBase* [6] {
+        new UnitWOPISlow(), new UnitSuperfluousSaves(), new UnitWOPICorrelatedManualSave(),
+        new UnitWOPICorrelatedManualSave(UnitWOPICorrelatedManualSave::Scenario::RetryUpload),
+        new UnitWOPICorrelatedManualSave(UnitWOPICorrelatedManualSave::Scenario::RevokeWrite), nullptr
+    };
 }
 
 /* vim:set shiftwidth=4 softtabstop=4 expandtab: */

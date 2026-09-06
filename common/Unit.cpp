@@ -158,7 +158,7 @@ bool UnitBase::init([[maybe_unused]] UnitType type, [[maybe_unused]] const std::
         while (tests[testCount] != nullptr)
             ++testCount;
 
-        GlobalArray = new UnitBase*[testCount + 2]; // + dummy + null termination.
+        GlobalArray = new UnitBase*[testCount + 2]{}; // + dummy + null termination.
         for (int i = 0; tests[i] != nullptr; ++i)
         {
             GlobalArray[i] = tests[i];
@@ -232,7 +232,10 @@ bool UnitBase::init([[maybe_unused]] UnitType type, [[maybe_unused]] const std::
     }
 
     GlobalArray[testCount + 1] = nullptr;
-    GlobalIndex = 0;
+    // Preserve the selected test. Resetting to zero here runs an uninitialized
+    // first test when COOL_TEST_OPTIONS selected a later member of the suite.
+    if (GlobalIndex < 0)
+        GlobalIndex = 0;
     return GlobalArray[GlobalIndex] != nullptr;
 }
 
@@ -606,9 +609,30 @@ void UnitWSD::startNextTest()
     UnitWSD* currentWSD = getMaybeNull();
     UnitWSDInterface* unitWsdInterface = currentWSD ? currentWSD->_wsd : nullptr;
 
-    // We have more tests.
-    ++GlobalIndex;
-    filter();
+    // Select locally: other threads dereference GlobalIndex, so never expose
+    // the null sentinel while skipping the remaining filtered-out tests.
+    auto nextIndex = GlobalIndex.load() + 1;
+    const auto& selectedFilter = GlobalTestOptions.getFilter();
+    while (GlobalArray[nextIndex] && GlobalArray[nextIndex + 1])
+    {
+        const auto& testName = GlobalArray[nextIndex]->getTestname();
+        if (Util::toLower(testName).find(selectedFilter) != std::string::npos)
+            break;
+        LOG_INF("Skipping test [" << testName << "] per filter [" << selectedFilter << ']');
+        ++nextIndex;
+    }
+
+    // Only the dummy (or null) remains. Keep the finished current instance
+    // valid until shutdown rather than initializing an empty dummy test.
+    if (!GlobalArray[nextIndex] || !GlobalArray[nextIndex + 1])
+    {
+        if constexpr (!Util::isMobileApp())
+            SigUtil::setTerminationFlag();
+        else
+            SocketPoll::wakeupWorld();
+        return;
+    }
+    GlobalIndex = nextIndex;
 
     if (GlobalArray[GlobalIndex] != nullptr && !SigUtil::getShutdownRequestFlag() &&
         (_result == TestResult::Ok || GlobalTestOptions.getKeepgoing()))
