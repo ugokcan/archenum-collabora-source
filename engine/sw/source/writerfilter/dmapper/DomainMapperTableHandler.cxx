@@ -1616,7 +1616,8 @@ void lcl_FillBoxAutoFormat(SwBoxAutoFormat& rBoxFormat, const PropertyMapPtr& pP
 /// referenced in this document, so live table-style resolution (SwDoc::ApplyTableStyleLive) has
 /// something to resolve against - Writer's own style catalog otherwise shares no names or
 /// definitions with Word's built-in table styles.
-TableStyleName lcl_ImportTableStyle(SwDoc& rDoc, TableStyleSheetEntry& rStyle)
+TableStyleName lcl_ImportTableStyle(SwDoc& rDoc, TableStyleSheetEntry& rStyle,
+                                  const StyleSheetTablePtr& pStyleSheetTable)
 {
     OUString sName = !rStyle.m_sConvertedStyleName.isEmpty() ? rStyle.m_sConvertedStyleName
                                                               : rStyle.m_sStyleName;
@@ -1634,13 +1635,30 @@ TableStyleName lcl_ImportTableStyle(SwDoc& rDoc, TableStyleSheetEntry& rStyle)
     if (!pNewFormat)
         return TableStyleName();
 
+    // GetProperties(mask) contains only conditional formatting, not the
+    // whole-table properties (or their basedOn chain). Omitting those makes
+    // styles such as TableGrid borderless when a row/column edit reapplies them.
+    const PropertyMapPtr pBaseProps = rStyle.GetMergedInheritedProperties(pStyleSheetTable);
     for (sal_uInt8 nRowRole = 0; nRowRole < SwTableAutoFormat::nRoleCount; ++nRowRole)
     {
         for (sal_uInt8 nColRole = 0; nColRole < SwTableAutoFormat::nRoleCount; ++nColRole)
         {
             const sal_Int32 nMask = lcl_GetTableStyleCnfMask(nRowRole, nColRole);
+            PropertyMapPtr pProps(new PropertyMap);
+            pProps->InsertProps(pBaseProps);
+            // Table-level outer borders belong only on outer cells. Resolve
+            // insideH/insideV and conditional overrides using the same border
+            // precedence as the initial per-cell DOCX import.
+            for (const auto eId : { PROP_TOP_BORDER, PROP_BOTTOM_BORDER,
+                                   PROP_LEFT_BORDER, PROP_RIGHT_BORDER,
+                                   META_PROP_HORIZONTAL_BORDER, META_PROP_VERTICAL_BORDER })
+                pProps->Erase(eId);
+            pProps->InsertProps(rStyle.GetProperties(nMask));
+            lcl_computeCellBorders(pBaseProps, pProps, nColRole, 0,
+                                   SwTableAutoFormat::nRoleCount - 1, nRowRole,
+                                   nRowRole == SwTableAutoFormat::nRoleCount - 1, false);
             SwBoxAutoFormat aBoxFormat;
-            lcl_FillBoxAutoFormat(aBoxFormat, rStyle.GetProperties(nMask));
+            lcl_FillBoxAutoFormat(aBoxFormat, pProps);
             const sal_uInt8 nPos
                 = static_cast<sal_uInt8>(nRowRole * SwTableAutoFormat::nRoleCount + nColRole);
             pNewFormat->SetBoxFormat(aBoxFormat, nPos);
@@ -1777,7 +1795,8 @@ void DomainMapperTableHandler::endTable(unsigned int nestedTableLevel)
                     if (aTableInfo.pTableStyle && pTable)
                     {
                         const TableStyleName aStyleName = lcl_ImportTableStyle(
-                            xTable->GetFrameFormat()->GetDoc(), *aTableInfo.pTableStyle);
+                            xTable->GetFrameFormat()->GetDoc(), *aTableInfo.pTableStyle,
+                            m_rDMapper_Impl.GetStyleSheetTable());
                         if (!aStyleName.isEmpty())
                         {
                             pTable->SetTableStyleName(aStyleName);

@@ -8,6 +8,7 @@
  */
 
 #include <swmodeltestbase.hxx>
+#include <optional>
 
 #include <com/sun/star/awt/XBitmap.hpp>
 #include <com/sun/star/drawing/FillStyle.hpp>
@@ -22,9 +23,13 @@
 #include <com/sun/star/packages/zip/ZipFileAccess.hpp>
 #include <com/sun/star/text/XTextFieldsSupplier.hpp>
 #include <com/sun/star/text/XTextTablesSupplier.hpp>
+#include <com/sun/star/table/BorderLine2.hpp>
 
 #include <config_fonts.h>
+#include <doc.hxx>
+#include <editsh.hxx>
 #include <officecfg/Office/Writer.hxx>
+#include <comphelper/configuration.hxx>
 #include <vcl/svapp.hxx>
 #include <comphelper/scopeguard.hxx>
 #include <test/commontesttools.hxx>
@@ -138,6 +143,59 @@ CPPUNIT_TEST_FIXTURE(Test, testTrackChangesInsertedTableRow)
     save(TestFilter::DOCX);
     xmlDocUniquePtr pXmlDoc = parseExport(u"word/document.xml"_ustr);
     assertXPath(pXmlDoc, "/w:document/w:body/w:tbl/w:tr[2]/w:trPr/w:ins");
+}
+
+CPPUNIT_TEST_FIXTURE(Test, testRejectInsertedTableRowPreservesBorders)
+{
+    // Structural changes reapply the imported named table style. Its base
+    // TableGrid properties must survive, not just its conditional properties.
+    const bool bAutoFormat = officecfg::Office::Writer::Table::Change::ApplyTableAutoFormat::get();
+    auto setAutoFormat = [](bool bValue) {
+        auto xChanges = comphelper::ConfigurationChanges::create();
+        officecfg::Office::Writer::Table::Change::ApplyTableAutoFormat::set(bValue, xChanges);
+        xChanges->commit();
+    };
+    comphelper::ScopeGuard aRestore([&] { setAutoFormat(bAutoFormat); });
+    setAutoFormat(true);
+    createSwDoc("testTrackChangesInsertedTableRow.docx");
+
+    std::optional<table::BorderLine2> oOriginalBorder;
+    auto verifyBorders = [this, &oOriginalBorder](sal_Int32 nRows) {
+        uno::Reference<text::XTextTablesSupplier> xSupplier(mxComponent, uno::UNO_QUERY_THROW);
+        uno::Reference<container::XIndexAccess> xTables(xSupplier->getTextTables(), uno::UNO_QUERY_THROW);
+        CPPUNIT_ASSERT_EQUAL(sal_Int32(1), xTables->getCount());
+        uno::Reference<text::XTextTable> xTable(xTables->getByIndex(0), uno::UNO_QUERY_THROW);
+        CPPUNIT_ASSERT_EQUAL(nRows, xTable->getRows()->getCount());
+        for (const OUString& rName : xTable->getCellNames())
+        {
+            uno::Reference<beans::XPropertySet> xCell(xTable->getCellByName(rName), uno::UNO_QUERY_THROW);
+            for (const auto& rSide : { u"TopBorder"_ustr, u"BottomBorder"_ustr,
+                                      u"LeftBorder"_ustr, u"RightBorder"_ustr })
+            {
+                const auto aBorder = getProperty<table::BorderLine2>(xCell, rSide);
+                CPPUNIT_ASSERT_MESSAGE("TableGrid cell border must remain visible", aBorder.LineWidth > 0);
+                if (!oOriginalBorder)
+                    oOriginalBorder = aBorder;
+                CPPUNIT_ASSERT_MESSAGE("TableGrid border width, color and style must not change",
+                                       aBorder == *oOriginalBorder);
+            }
+        }
+    };
+    verifyBorders(3);
+    SwEditShell* pShell = getSwDoc()->GetEditShell();
+    CPPUNIT_ASSERT(pShell);
+    CPPUNIT_ASSERT_EQUAL(static_cast<SwRedlineTable::size_type>(1), pShell->GetRedlineCount());
+    CPPUNIT_ASSERT(pShell->RejectRedline(0));
+    verifyBorders(2);
+
+    saveAndReload(TestFilter::DOCX);
+    verifyBorders(2);
+    xmlDocUniquePtr pXmlDoc = parseExport(u"word/document.xml"_ustr);
+    assertXPath(pXmlDoc, "//w:tbl/w:tr", 2);
+    assertXPathContent(pXmlDoc, "//w:tbl/w:tr[1]/w:tc/w:p/w:r/w:t", u"First row");
+    assertXPathContent(pXmlDoc, "//w:tbl/w:tr[2]/w:tc/w:p/w:r/w:t", u"Last row");
+    assertXPath(pXmlDoc, "//w:ins|//w:del", 0);
+    assertXPath(pXmlDoc, "//w:tcBorders/*[@w:val='nil' or @w:val='none']", 0);
 }
 
 CPPUNIT_TEST_FIXTURE(Test, testTrackChangesDeletedTableCell)
