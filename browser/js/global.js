@@ -460,10 +460,14 @@ class BrowserInitializer extends InitializerBase {
 		// Archenum's chrome is dark by default, not the document itself. These
 		// are defaults only: retain explicit integrator values and the normal
 		// saved-preference precedence (including the user's page inversion).
-		window.uiDefaults.darkTheme ??= 'true';
-		window.uiDefaults.darkBackgroundForTheme ??= {};
-		window.uiDefaults.darkBackgroundForTheme.dark ??= 'false';
-		window.uiDefaults.darkBackgroundForTheme.light ??= 'false';
+		if (window.uiDefaults.darkTheme == null)
+			window.uiDefaults.darkTheme = 'true';
+		if (window.uiDefaults.darkBackgroundForTheme == null)
+			window.uiDefaults.darkBackgroundForTheme = {};
+		if (window.uiDefaults.darkBackgroundForTheme.dark == null)
+			window.uiDefaults.darkBackgroundForTheme.dark = 'false';
+		if (window.uiDefaults.darkBackgroundForTheme.light == null)
+			window.uiDefaults.darkBackgroundForTheme.light = 'false';
 		// The server administrator can choose the opening zoom for every text
 		// document. Both attributes are empty when coolwsd.xml chooses neither,
 		// which leaves the choice with each user.

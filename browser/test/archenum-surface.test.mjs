@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 
 // Execute the actual boot defaults and upstream preference resolver, not a
 // duplicate implementation. Rendering and engine round-trip need a live editor.
-const source = readFileSync(new URL('./js/global.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../js/global.js', import.meta.url), 'utf8');
 function section(start, end) {
 	const from = source.indexOf(start);
 	const to = source.indexOf(end, from);
@@ -57,4 +57,15 @@ test('explicit integrator defaults and unrelated editor options survive', () => 
 test('SavedUIState=false retains upstream integrator precedence', () => {
 	const { prefs } = launch({ darkTheme: 'false' }, { darkTheme: 'true' }, false);
 	assert.equal(prefs.seedDarkModeDefault(), false);
+});
+
+test('null integrator defaults retain nullish fallback semantics', () => {
+	const { prefs } = launch({ darkTheme: null, darkBackgroundForTheme: null });
+	assert.equal(prefs.seedDarkModeDefault(), true);
+	assert.equal(prefs.getBoolean('darkBackgroundForTheme.dark', true), false);
+});
+
+test('Node regression tests stay outside browser TypeScript compilation', () => {
+	const config = JSON.parse(readFileSync(new URL('../tsconfig.json', import.meta.url), 'utf8'));
+	assert.ok(config.exclude.includes('test'));
 });
