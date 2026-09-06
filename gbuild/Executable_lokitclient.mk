@@ -45,6 +45,7 @@ $(eval $(call gb_Executable_use_externals,lokitclient, \
     expat \
     libpng \
     openssl \
+    openssl_headers \
     zlib \
     zstd \
 ))

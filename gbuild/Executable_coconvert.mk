@@ -38,6 +38,7 @@ $(eval $(call gb_Executable_use_static_libraries,coconvert, \
 $(eval $(call gb_Executable_use_externals,coconvert, \
     expat \
     openssl \
+    openssl_headers \
     zlib \
 ))
 

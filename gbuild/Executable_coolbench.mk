@@ -46,6 +46,7 @@ $(eval $(call gb_Executable_use_externals,coolbench, \
     expat \
     libpng \
     openssl \
+    openssl_headers \
     zlib \
     zstd \
 ))

@@ -37,6 +37,7 @@ $(eval $(call gb_Executable_use_static_libraries,coolmap, \
 $(eval $(call gb_Executable_use_externals,coolmap, \
     expat \
     openssl \
+    openssl_headers \
     zlib \
 ))
 
