@@ -292,7 +292,8 @@ COOL_CSS =\
 	$(srcdir)/css/infobar.css \
 	$(srcdir)/css/tooltip.css \
 	$(srcdir)/css/progressbar.css \
-	$(srcdir)/css/settings.css
+	$(srcdir)/css/settings.css \
+	$(srcdir)/css/archenum-surface.css
 
 COOL_CSS_DST = $(foreach file,$(COOL_CSS),$(DIST_FOLDER)/$(notdir $(file)))
 COOL_CSS_M4 = $(strip $(foreach file,$(COOL_CSS),$(notdir $(file))))

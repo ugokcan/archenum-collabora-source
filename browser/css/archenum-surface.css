@@ -1,0 +1,63 @@
+/* Archenum editor chrome. Native document colors and review semantics remain
+ * owned by the document engine. No external font/asset requests are introduced.
+ * Source tokens: Archenum index.css glass surfaces and mobile theme/design.ts.
+ */
+@media (forced-colors: none) {
+	:root {
+		--color-primary: #ff1200;
+		--color-primary-dark: #e41000;
+		--color-primary-darker: #bf1000;
+		--color-primary-lighter: #ffe7e4;
+		--color-btn-primary-hover-bg: #ffe7e4;
+		--archenum-surface-radius: 16px;
+	}
+	[data-theme='dark'] {
+		--color-main-text: #fafafa;
+		--color-text-dark: #fafafa;
+		--color-text-darker: #ffffff;
+		--color-text-light: #a1a1aa;
+		--color-text-lighter: #d4d4d8;
+		--color-main-background: #09090b;
+		--color-background-dark: #27272a;
+		--color-background-darker: #3f3f46;
+		--color-background-lighter: #18181b;
+		--color-background-tabs-group: #0f0f12;
+		--color-canvas: #09090b;
+		--color-primary: #ff1200;
+		--color-primary-dark: #e41000;
+		--color-primary-darker: #bf1000;
+		--color-primary-lighter: #491c19;
+		--color-btn-primary-hover-bg: #491c19;
+		--color-border: #3f3f46;
+		--color-border-dark: #52525b;
+		--color-border-darker: #71717a;
+		--color-border-lighter: #27272a;
+		--color-toolbar-border: rgba(255, 255, 255, 0.10);
+		--color-overlay: rgba(255, 18, 0, 0.10);
+		--color-scrollbar-thumb: #71717a;
+		--color-scrollbar-railway: #18181b;
+		--color-backstage-background: #09090b;
+		--color-backstage-background-dark: #0f0f12;
+	}
+
+	/* No position/transform/overflow changes: preserve upstream sizing,
+	 * document viewport, keyboard navigation and mobile wizard ownership. */
+	[data-theme='dark'] #mobile-wizard {
+		background: #18181b;
+		border-color: var(--color-toolbar-border);
+		border-radius: var(--archenum-surface-radius) var(--archenum-surface-radius) 0 0;
+		box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.45);
+	}
+	[data-theme='dark'] .ui-tab.selected.notebookbar {
+		border-bottom: 2px solid var(--color-primary);
+	}
+	#mobile-wizard :is(button, .mobile-wizard-back) {
+		min-height: 48px;
+		min-width: 48px;
+	}
+	#mobile-wizard :is(button, .mobile-wizard-back):focus-visible,
+	.notebookbar :is(button, [role='button']):focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+}
