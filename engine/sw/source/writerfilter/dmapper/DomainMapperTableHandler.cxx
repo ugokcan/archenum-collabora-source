@@ -19,6 +19,7 @@
 
 #include <sal/config.h>
 
+#include <algorithm>
 #include <string_view>
 
 #include <basegfx/units/Length.hxx>
@@ -1577,7 +1578,6 @@ void lcl_FillBoxAutoFormat(SwBoxAutoFormat& rBoxFormat, const PropertyMapPtr& pP
     SwAutoFormatProps& rProps = rBoxFormat.GetProps();
 
     SvxBoxItem aBox(RES_BOX);
-    bool bHasBorder = false;
     static const struct { PropertyIds eId; SvxBoxItemLine eLine; } aBorders[] = {
         { PROP_TOP_BORDER, SvxBoxItemLine::TOP },
         { PROP_BOTTOM_BORDER, SvxBoxItemLine::BOTTOM },
@@ -1594,12 +1594,35 @@ void lcl_FillBoxAutoFormat(SwBoxAutoFormat& rBoxFormat, const PropertyMapPtr& pP
             if (SvxBoxItem::LineToSvxLine(aLine, aSvxLine, true))
             {
                 aBox.SetLine(&aSvxLine, rBorder.eLine);
-                bHasBorder = true;
             }
         }
     }
-    if (bHasBorder)
-        rProps.SetBox(aBox);
+    // A box item contains padding as well as border lines. Building it from
+    // only the lines would replace Word's cell margins with zero on reapply.
+    static const struct {
+        PropertyIds eCellId;
+        PropertyIds eTableId;
+        SvxBoxItemLine eLine;
+        sal_Int32 nDefault;
+    } aMargins[] = {
+        { PROP_TOP_BORDER_DISTANCE, META_PROP_CELL_MAR_TOP, SvxBoxItemLine::TOP, 0 },
+        { PROP_BOTTOM_BORDER_DISTANCE, META_PROP_CELL_MAR_BOTTOM, SvxBoxItemLine::BOTTOM, 0 },
+        { PROP_LEFT_BORDER_DISTANCE, META_PROP_CELL_MAR_LEFT, SvxBoxItemLine::LEFT, DEF_BORDER_DIST },
+        { PROP_RIGHT_BORDER_DISTANCE, META_PROP_CELL_MAR_RIGHT, SvxBoxItemLine::RIGHT, DEF_BORDER_DIST },
+    };
+    for (const auto& rMargin : aMargins)
+    {
+        auto oMargin = pProps->getProperty(rMargin.eCellId);
+        if (!oMargin)
+            oMargin = pProps->getProperty(rMargin.eTableId);
+        sal_Int32 nDistance = rMargin.nDefault;
+        if (oMargin)
+            oMargin->second >>= nDistance;
+        const sal_Int64 nTwips = gfx::Length::hmm(nDistance).as_twip<sal_Int64>();
+        aBox.SetDistance(static_cast<sal_Int16>(std::clamp<sal_Int64>(nTwips, SAL_MIN_INT16, SAL_MAX_INT16)),
+                         rMargin.eLine);
+    }
+    rProps.SetBox(aBox);
 
     const std::optional<PropertyMap::Property> oBackColor = pProps->getProperty(PROP_BACK_COLOR);
     sal_Int32 nBackColor = 0;
@@ -1634,6 +1657,12 @@ TableStyleName lcl_ImportTableStyle(SwDoc& rDoc, TableStyleSheetEntry& rStyle,
     SwTableAutoFormat* pNewFormat = rDoc.MakeTableStyle(aStyleName);
     if (!pNewFormat)
         return TableStyleName();
+
+    // This conversion models box borders/background, not a complete Writer
+    // character/paragraph autoformat. Never stamp its default 12pt font and
+    // paragraph alignment over the existing imported document text.
+    pNewFormat->SetFont(false);
+    pNewFormat->SetJustify(false);
 
     // GetProperties(mask) contains only conditional formatting, not the
     // whole-table properties (or their basedOn chain). Omitting those makes

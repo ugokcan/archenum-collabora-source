@@ -8,6 +8,7 @@
  */
 
 #include <swmodeltestbase.hxx>
+#include <map>
 #include <optional>
 
 #include <com/sun/star/awt/XBitmap.hpp>
@@ -160,7 +161,8 @@ CPPUNIT_TEST_FIXTURE(Test, testRejectInsertedTableRowPreservesBorders)
     createSwDoc("testTrackChangesInsertedTableRow.docx");
 
     std::optional<table::BorderLine2> oOriginalBorder;
-    auto verifyBorders = [this, &oOriginalBorder](sal_Int32 nRows) {
+    std::map<OUString, std::map<OUString, cpo::uno::Any>> aOriginalFormatting;
+    auto verifyBorders = [this, &oOriginalBorder, &aOriginalFormatting](sal_Int32 nRows) {
         uno::Reference<text::XTextTablesSupplier> xSupplier(mxComponent, uno::UNO_QUERY_THROW);
         uno::Reference<container::XIndexAccess> xTables(xSupplier->getTextTables(), uno::UNO_QUERY_THROW);
         CPPUNIT_ASSERT_EQUAL(sal_Int32(1), xTables->getCount());
@@ -169,6 +171,26 @@ CPPUNIT_TEST_FIXTURE(Test, testRejectInsertedTableRowPreservesBorders)
         for (const OUString& rName : xTable->getCellNames())
         {
             uno::Reference<beans::XPropertySet> xCell(xTable->getCellByName(rName), uno::UNO_QUERY_THROW);
+            uno::Reference<text::XText> xCellText(xCell, uno::UNO_QUERY_THROW);
+            const OUString aText = xCellText->getString();
+            auto checkProperty = [&](const uno::Reference<beans::XPropertySet>& xProps,
+                                     const OUString& rProperty) {
+                const cpo::uno::Any aValue = xProps->getPropertyValue(rProperty);
+                if (nRows == 3)
+                    aOriginalFormatting[aText][rProperty] = aValue;
+                else
+                    CPPUNIT_ASSERT_MESSAGE(rProperty.toUtf8().getStr(),
+                                           aOriginalFormatting.at(aText).at(rProperty) == aValue);
+            };
+            uno::Reference<beans::XPropertySet> xParagraph(
+                getParagraphOfText(1, xCellText), uno::UNO_QUERY_THROW);
+            for (const auto& rProperty : { u"CharFontName"_ustr, u"CharHeight"_ustr,
+                                          u"CharWeight"_ustr, u"CharPosture"_ustr,
+                                          u"ParaAdjust"_ustr })
+                checkProperty(xParagraph, rProperty);
+            for (const auto& rProperty : { u"TopBorderDistance"_ustr, u"BottomBorderDistance"_ustr,
+                                          u"LeftBorderDistance"_ustr, u"RightBorderDistance"_ustr })
+                checkProperty(xCell, rProperty);
             for (const auto& rSide : { u"TopBorder"_ustr, u"BottomBorder"_ustr,
                                       u"LeftBorder"_ustr, u"RightBorder"_ustr })
             {
