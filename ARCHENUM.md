@@ -13,6 +13,13 @@ redline colors, comments, UNO commands, WOPI and saving are not rewritten.
 Mobile wizard controls retain upstream behavior with 48px touch targets.
 No external fonts or assets are requested by this layer.
 
+Web boot defaults select dark chrome and non-inverted document pages. Existing
+saved user choices and explicit integrator defaults retain their normal
+precedence; SavedUIState is not disabled by the fork. This includes Archenum's
+web-based Electron and mobile WebView integrations, not Collabora native apps.
+Run `node --test browser/archenum-surface.test.mjs` for the four executable
+boot/preference checks. They do not test tile rendering or the native engine.
+
 This initial source change is not a compiled image or visual acceptance.
 Next: build the browser and engine, verify desktop/mobile editing and Manage
 Changes, produce a pinned image, and switch isolated Archenum staging only
